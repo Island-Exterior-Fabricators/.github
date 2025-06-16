@@ -1,0 +1,17 @@
+name: Planned Work
+description: Propose a new feature, enhancement, or planned task.
+title: "<short summary here>"
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: What needs to be done?
+      description: Use a clear, descriptive sentence.
+      placeholder: "e.g. Add export to CSV option in reports page"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context (optional)
+      description: Any extra details, links, or context? (Optional)
