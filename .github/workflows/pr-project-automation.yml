@@ -248,6 +248,7 @@ jobs:
             if [[ "$PR_DRAFT" == "true" ]]; then
               set_status "$ITEM_ID" "$IN_PROGRESS_OPTION_ID"
               echo "Status → In progress (draft PR)"
+              process_linked_issues "$IN_PROGRESS_OPTION_ID"
             else
               set_status "$ITEM_ID" "$IN_REVIEW_OPTION_ID"
               echo "Status → In review (non-draft PR)"
