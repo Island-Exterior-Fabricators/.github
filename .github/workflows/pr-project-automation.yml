@@ -23,7 +23,6 @@ jobs:
           PR_NUMBER:   ${{ github.event.pull_request.number }}
           PR_CREATOR:  ${{ github.event.pull_request.user.login }}
           PR_DRAFT:    ${{ github.event.pull_request.draft }}
-          PR_BODY:     ${{ github.event.pull_request.body }}
           REPO:        ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -32,6 +31,10 @@ jobs:
           PROJECT_NUMBER=1
 
           echo "Action: $PR_ACTION | PR #$PR_NUMBER | Draft: $PR_DRAFT"
+
+          # Fetch current PR body from API (not event payload, which can be stale)
+          PR_BODY=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" \
+            | jq -r '.body // ""')
 
           # ── Fetch project metadata ─────────────────────────────────────────
           PROJECT_DATA=$(gh api graphql -f query='
