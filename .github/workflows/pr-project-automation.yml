@@ -92,7 +92,7 @@ jobs:
             DURATION=$(echo "$iter" | jq -r '.duration')
             ITER_ID=$(echo  "$iter" | jq -r '.id')
             END=$(date -u -d "$START + $DURATION days" +%Y-%m-%d)
-            if [[ "$TODAY" >= "$START" && "$TODAY" < "$END" ]]; then
+            if [[ ! "$TODAY" < "$START" && "$TODAY" < "$END" ]]; then
               CURRENT_ITERATION_ID="$ITER_ID"
               break
             fi
