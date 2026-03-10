@@ -1,0 +1,266 @@
+name: PR Project Board Automation (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  automate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: 3056973
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Run project board automation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_ACTION:   ${{ github.event.action }}
+          PR_NODE_ID:  ${{ github.event.pull_request.node_id }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
+          PR_CREATOR:  ${{ github.event.pull_request.user.login }}
+          PR_DRAFT:    ${{ github.event.pull_request.draft }}
+          PR_BODY:     ${{ github.event.pull_request.body }}
+          REPO:        ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ORG="Island-Exterior-Fabricators"
+          PROJECT_NUMBER=1
+
+          echo "Action: $PR_ACTION | PR #$PR_NUMBER | Draft: $PR_DRAFT"
+
+          # ── Fetch project metadata ─────────────────────────────────────────
+          PROJECT_DATA=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2Field {
+                        id name
+                      }
+                      ... on ProjectV2SingleSelectField {
+                        id name
+                        options { id name }
+                      }
+                      ... on ProjectV2IterationField {
+                        id name
+                        configuration {
+                          iterations {
+                            id title startDate duration
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ' -F org="$ORG" -F number="$PROJECT_NUMBER")
+
+          PROJECT_ID=$(echo "$PROJECT_DATA" | \
+            jq -r '.data.organization.projectV2.id')
+
+          STATUS_FIELD_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Status") | .id')
+
+          IN_PROGRESS_OPTION_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Status")
+            | .options[] | select(.name == "In progress") | .id')
+
+          IN_REVIEW_OPTION_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Status")
+            | .options[] | select(.name == "In review") | .id')
+
+          SPRINT_FIELD_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Sprint") | .id')
+
+          # Find current iteration by comparing today against start+duration
+          TODAY=$(date -u +%Y-%m-%d)
+          CURRENT_ITERATION_ID=""
+          while IFS= read -r iter; do
+            START=$(echo    "$iter" | jq -r '.startDate')
+            DURATION=$(echo "$iter" | jq -r '.duration')
+            ITER_ID=$(echo  "$iter" | jq -r '.id')
+            END=$(date -u -d "$START + $DURATION days" +%Y-%m-%d)
+            if [[ "$TODAY" >= "$START" && "$TODAY" < "$END" ]]; then
+              CURRENT_ITERATION_ID="$ITER_ID"
+              break
+            fi
+          done < <(echo "$PROJECT_DATA" | jq -c '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Sprint")
+            | .configuration.iterations[]')
+
+          # ── Helper: add node to project, return item ID ────────────────────
+          add_to_project() {
+            local node_id="$1"
+            gh api graphql -f query='
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: {
+                  projectId: $projectId
+                  contentId: $contentId
+                }) { item { id } }
+              }
+            ' -F projectId="$PROJECT_ID" \
+              -F contentId="$node_id" \
+            | jq -r '.data.addProjectV2ItemById.item.id'
+          }
+
+          # ── Helper: find existing project item ID for a node ───────────────
+          get_item_id() {
+            local node_id="$1"
+            gh api graphql -f query='
+              query($nodeId: ID!) {
+                node(id: $nodeId) {
+                  ... on PullRequest {
+                    projectItems(first: 10) {
+                      nodes { id project { number } }
+                    }
+                  }
+                  ... on Issue {
+                    projectItems(first: 10) {
+                      nodes { id project { number } }
+                    }
+                  }
+                }
+              }
+            ' -F nodeId="$node_id" \
+            | jq -r --argjson num "$PROJECT_NUMBER" '
+                .data.node.projectItems.nodes[]?
+                | select(.project.number == $num)
+                | .id' \
+            | head -1
+          }
+
+          # ── Helper: get item ID, adding to project if missing ──────────────
+          ensure_in_project() {
+            local node_id="$1"
+            local item_id
+            item_id=$(get_item_id "$node_id")
+            if [[ -z "$item_id" ]]; then
+              item_id=$(add_to_project "$node_id")
+            fi
+            echo "$item_id"
+          }
+
+          # ── Helper: set status (single-select) ────────────────────────────
+          set_status() {
+            local item_id="$1"
+            local option_id="$2"
+            gh api graphql -f query='
+              mutation(
+                $projectId: ID!, $itemId: ID!,
+                $fieldId: ID!, $optionId: String!
+              ) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            ' -F projectId="$PROJECT_ID" \
+              -F itemId="$item_id" \
+              -F fieldId="$STATUS_FIELD_ID" \
+              -F optionId="$option_id" \
+            > /dev/null
+          }
+
+          # ── Helper: set sprint (iteration) ────────────────────────────────
+          set_sprint() {
+            local item_id="$1"
+            local iteration_id="$2"
+            gh api graphql -f query='
+              mutation(
+                $projectId: ID!, $itemId: ID!,
+                $fieldId: ID!, $iterationId: String!
+              ) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { iterationId: $iterationId }
+                }) { projectV2Item { id } }
+              }
+            ' -F projectId="$PROJECT_ID" \
+              -F itemId="$item_id" \
+              -F fieldId="$SPRINT_FIELD_ID" \
+              -F iterationId="$iteration_id" \
+            > /dev/null
+          }
+
+          # ── Helper: update linked issues to a given status ────────────────
+          process_linked_issues() {
+            local status_option_id="$1"
+            local linked
+            linked=$(echo "$PR_BODY" \
+              | grep -oiE \
+                '(closes|fixes|resolves|close|fix|resolve)[[:space:]:]+#[0-9]+' \
+              | grep -oE '[0-9]+' \
+              || true)
+            for issue_num in $linked; do
+              echo "  Processing linked issue #$issue_num"
+              local issue_node_id issue_item_id
+              issue_node_id=$(gh api \
+                "/repos/$REPO/issues/$issue_num" \
+                | jq -r '.node_id')
+              issue_item_id=$(ensure_in_project "$issue_node_id")
+              set_status "$issue_item_id" "$status_option_id"
+              echo "  Issue #$issue_num status updated"
+            done
+          }
+
+          # ── Main logic ────────────────────────────────────────────────────
+          if [[ "$PR_ACTION" == "opened" || \
+                "$PR_ACTION" == "reopened" ]]; then
+
+            # Assign PR to creator
+            gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$REPO/issues/$PR_NUMBER/assignees" \
+              -f "assignees[]=$PR_CREATOR" \
+            > /dev/null
+            echo "Assigned to $PR_CREATOR"
+
+            # Add to project
+            ITEM_ID=$(ensure_in_project "$PR_NODE_ID")
+            echo "Project item: $ITEM_ID"
+
+            # Set sprint
+            if [[ -n "$CURRENT_ITERATION_ID" ]]; then
+              set_sprint "$ITEM_ID" "$CURRENT_ITERATION_ID"
+              echo "Sprint → current iteration"
+            else
+              echo "Warning: no active sprint found, skipping sprint field"
+            fi
+
+            # Draft → In progress; non-draft → In review
+            if [[ "$PR_DRAFT" == "true" ]]; then
+              set_status "$ITEM_ID" "$IN_PROGRESS_OPTION_ID"
+              echo "Status → In progress (draft PR)"
+            else
+              set_status "$ITEM_ID" "$IN_REVIEW_OPTION_ID"
+              echo "Status → In review (non-draft PR)"
+              process_linked_issues "$IN_REVIEW_OPTION_ID"
+            fi
+
+          elif [[ "$PR_ACTION" == "ready_for_review" ]]; then
+
+            ITEM_ID=$(ensure_in_project "$PR_NODE_ID")
+            set_status "$ITEM_ID" "$IN_REVIEW_OPTION_ID"
+            echo "Status → In review"
+            process_linked_issues "$IN_REVIEW_OPTION_ID"
+
+          fi
+
+          echo "Done."
