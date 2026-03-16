@@ -130,7 +130,9 @@ jobs:
               }
             " -F org="$ORG" -F number="$PROJECT_NUMBER")
 
-            # Debug: show raw item count
+            # Debug: show raw response
+            echo "PROJECT_ID: $PROJECT_ID"
+            echo "Raw response: $(echo "$ITEMS" | jq -c '.' | head -c 500)"
             echo "Items returned: $(echo "$ITEMS" | jq '.data.organization.projectV2.items.nodes | length')"
             echo "Matching filter: $(echo "$ITEMS" | jq '[.data.organization.projectV2.items.nodes[] | select(.fieldValueByName.optionId != null and .sprint.iterationId == null)] | length')"
 
