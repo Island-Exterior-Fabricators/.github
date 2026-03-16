@@ -130,6 +130,10 @@ jobs:
               }
             ")
 
+            # Debug: show raw item count
+            echo "Items returned: $(echo "$ITEMS" | jq '.data.node.items.nodes | length')"
+            echo "Matching filter: $(echo "$ITEMS" | jq '[.data.node.items.nodes[] | select(.fieldValueByName.optionId != null and .sprint.iterationId == null)] | length')"
+
             # Process each item: skip Backlog and already-sprinted
             echo "$ITEMS" | jq -c '
               .data.node.items.nodes[]
