@@ -26,7 +26,7 @@ jobs:
           ORG="Island-Exterior-Fabricators"
           PROJECT_NUMBER=1
 
-          # ── Fetch project metadata ───────────────────────────────────────
+          # ── Fetch project metadata + first page of items ─────────────────
           PROJECT_DATA=$(gh api graphql -f query='
             query($org: String!, $number: Int!) {
               organization(login: $org) {
@@ -48,10 +48,28 @@ jobs:
                       }
                     }
                   }
+                  items(first: 100) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      id
+                      fieldValueByName(name: "Status") {
+                        ... on ProjectV2ItemFieldSingleSelectValue {
+                          optionId
+                        }
+                      }
+                      sprint: fieldValueByName(name: "Sprint") {
+                        ... on ProjectV2ItemFieldIterationValue {
+                          iterationId
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
           ' -F org="$ORG" -F number="$PROJECT_NUMBER")
+
+          echo "Items in metadata query: $(echo "$PROJECT_DATA" | jq '.data.organization.projectV2.items.nodes | length')"
 
           PROJECT_ID=$(echo "$PROJECT_DATA" | \
             jq -r '.data.organization.projectV2.id')
