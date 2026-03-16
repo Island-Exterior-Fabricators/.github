@@ -26,7 +26,7 @@ jobs:
           ORG="Island-Exterior-Fabricators"
           PROJECT_NUMBER=1
 
-          # ── Fetch project metadata + first page of items ─────────────────
+          # ── Fetch project metadata (fields + iterations) ─────────────────
           PROJECT_DATA=$(gh api graphql -f query='
             query($org: String!, $number: Int!) {
               organization(login: $org) {
@@ -34,10 +34,6 @@ jobs:
                   id
                   fields(first: 20) {
                     nodes {
-                      ... on ProjectV2SingleSelectField {
-                        id name
-                        options { id name }
-                      }
                       ... on ProjectV2IterationField {
                         id name
                         configuration {
@@ -48,28 +44,10 @@ jobs:
                       }
                     }
                   }
-                  items(first: 100) {
-                    pageInfo { hasNextPage endCursor }
-                    nodes {
-                      id
-                      fieldValueByName(name: "Status") {
-                        ... on ProjectV2ItemFieldSingleSelectValue {
-                          optionId
-                        }
-                      }
-                      sprint: fieldValueByName(name: "Sprint") {
-                        ... on ProjectV2ItemFieldIterationValue {
-                          iterationId
-                        }
-                      }
-                    }
-                  }
                 }
               }
             }
           ' -F org="$ORG" -F number="$PROJECT_NUMBER")
-
-          echo "Items in metadata query: $(echo "$PROJECT_DATA" | jq '.data.organization.projectV2.items.nodes | length')"
 
           PROJECT_ID=$(echo "$PROJECT_DATA" | \
             jq -r '.data.organization.projectV2.id')
@@ -77,11 +55,6 @@ jobs:
           SPRINT_FIELD_ID=$(echo "$PROJECT_DATA" | jq -r '
             .data.organization.projectV2.fields.nodes[]
             | select(.name == "Sprint") | .id')
-
-          BACKLOG_OPTION_ID=$(echo "$PROJECT_DATA" | jq -r '
-            .data.organization.projectV2.fields.nodes[]
-            | select(.name == "Status")
-            | .options[] | select(.name == "Backlog") | .id')
 
           # Find current iteration
           TODAY=$(date -u +%Y-%m-%d)
@@ -110,95 +83,43 @@ jobs:
 
           echo "Current sprint: $CURRENT_ITERATION_TITLE"
 
-          # ── Fetch all project items with status and sprint ───────────────
-          CURSOR=""
-          UPDATED=0
-          while true; do
-            if [[ -z "$CURSOR" ]]; then
-              AFTER_ARG=""
-            else
-              AFTER_ARG=", after: \"$CURSOR\""
-            fi
+          # ── Fetch items via gh project CLI (works with app tokens) ───────
+          ITEMS=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$ORG" --format json --limit 500)
 
-            ITEMS=$(gh api graphql -f query="
-              query(\$org: String!, \$number: Int!) {
-                organization(login: \$org) {
-                  projectV2(number: \$number) {
-                    items(first: 100${AFTER_ARG}) {
-                      pageInfo {
-                        hasNextPage
-                        endCursor
-                      }
-                      nodes {
-                        id
-                        fieldValueByName(name: \"Status\") {
-                          ... on ProjectV2ItemFieldSingleSelectValue {
-                            optionId
-                          }
-                        }
-                        sprint: fieldValueByName(name: \"Sprint\") {
-                          ... on ProjectV2ItemFieldIterationValue {
-                            iterationId
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
+          TOTAL=$(echo "$ITEMS" | jq '.totalCount')
+          echo "Total project items: $TOTAL"
+
+          # Filter: has a status, status is not Backlog, no sprint set
+          echo "$ITEMS" | jq -c '
+            .items[]
+            | select(
+                .status != null
+                and .status != "Backlog"
+                and (.sprint == null or .sprint == "")
+              )' \
+          | while IFS= read -r item; do
+            ITEM_ID=$(echo "$item" | jq -r '.id')
+            TITLE=$(echo "$item" | jq -r '.title')
+
+            echo "  Setting sprint: $TITLE"
+            gh api graphql -f query='
+              mutation(
+                $projectId: ID!, $itemId: ID!,
+                $fieldId: ID!, $iterationId: String!
+              ) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { iterationId: $iterationId }
+                }) { projectV2Item { id } }
               }
-            " -F org="$ORG" -F number="$PROJECT_NUMBER")
-
-            # Debug: show raw response
-            echo "PROJECT_ID: $PROJECT_ID"
-            echo "Raw response: $(echo "$ITEMS" | jq -c '.' | head -c 500)"
-            echo "Items returned: $(echo "$ITEMS" | jq '.data.organization.projectV2.items.nodes | length')"
-            echo "Matching filter: $(echo "$ITEMS" | jq '[.data.organization.projectV2.items.nodes[] | select(.fieldValueByName.optionId != null and .sprint.iterationId == null)] | length')"
-
-            # Process each item: skip Backlog and already-sprinted
-            echo "$ITEMS" | jq -c '
-              .data.organization.projectV2.items.nodes[]
-              | select(
-                  .fieldValueByName.optionId != null
-                  and .sprint.iterationId == null
-                )' \
-            | while IFS= read -r item; do
-              ITEM_ID=$(echo "$item" | jq -r '.id')
-              STATUS_OPT=$(echo "$item" | jq -r '.fieldValueByName.optionId')
-
-              # Skip Backlog items
-              if [[ "$STATUS_OPT" == "$BACKLOG_OPTION_ID" ]]; then
-                continue
-              fi
-
-              echo "  Setting sprint on item $ITEM_ID"
-              gh api graphql -f query='
-                mutation(
-                  $projectId: ID!, $itemId: ID!,
-                  $fieldId: ID!, $iterationId: String!
-                ) {
-                  updateProjectV2ItemFieldValue(input: {
-                    projectId: $projectId
-                    itemId: $itemId
-                    fieldId: $fieldId
-                    value: { iterationId: $iterationId }
-                  }) { projectV2Item { id } }
-                }
-              ' -F projectId="$PROJECT_ID" \
-                -F itemId="$ITEM_ID" \
-                -F fieldId="$SPRINT_FIELD_ID" \
-                -F iterationId="$CURRENT_ITERATION_ID" \
-              > /dev/null
-              UPDATED=$((UPDATED + 1))
-            done
-
-            # Pagination
-            HAS_NEXT=$(echo "$ITEMS" | \
-              jq -r '.data.organization.projectV2.items.pageInfo.hasNextPage')
-            if [[ "$HAS_NEXT" != "true" ]]; then
-              break
-            fi
-            CURSOR=$(echo "$ITEMS" | \
-              jq -r '.data.organization.projectV2.items.pageInfo.endCursor')
+            ' -F projectId="$PROJECT_ID" \
+              -F itemId="$ITEM_ID" \
+              -F fieldId="$SPRINT_FIELD_ID" \
+              -F iterationId="$CURRENT_ITERATION_ID" \
+            > /dev/null
           done
 
-          echo "Done. Updated items with current sprint."
+          echo "Done."
