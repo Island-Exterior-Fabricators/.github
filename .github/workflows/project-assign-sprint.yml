@@ -1,0 +1,180 @@
+name: Assign Sprint to Unsprinted Items
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 6 AM UTC daily
+  workflow_dispatch:       # allow manual trigger
+
+jobs:
+  assign-sprints:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: 3056973
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Assign current sprint to items missing one
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          ORG="Island-Exterior-Fabricators"
+          PROJECT_NUMBER=1
+
+          # ── Fetch project metadata ───────────────────────────────────────
+          PROJECT_DATA=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id name
+                        options { id name }
+                      }
+                      ... on ProjectV2IterationField {
+                        id name
+                        configuration {
+                          iterations {
+                            id title startDate duration
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ' -F org="$ORG" -F number="$PROJECT_NUMBER")
+
+          PROJECT_ID=$(echo "$PROJECT_DATA" | \
+            jq -r '.data.organization.projectV2.id')
+
+          SPRINT_FIELD_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Sprint") | .id')
+
+          BACKLOG_OPTION_ID=$(echo "$PROJECT_DATA" | jq -r '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Status")
+            | .options[] | select(.name == "Backlog") | .id')
+
+          # Find current iteration
+          TODAY=$(date -u +%Y-%m-%d)
+          CURRENT_ITERATION_ID=""
+          CURRENT_ITERATION_TITLE=""
+          while IFS= read -r iter; do
+            START=$(echo    "$iter" | jq -r '.startDate')
+            DURATION=$(echo "$iter" | jq -r '.duration')
+            ITER_ID=$(echo  "$iter" | jq -r '.id')
+            TITLE=$(echo    "$iter" | jq -r '.title')
+            END=$(date -u -d "$START + $DURATION days" +%Y-%m-%d)
+            if [[ ! "$TODAY" < "$START" && "$TODAY" < "$END" ]]; then
+              CURRENT_ITERATION_ID="$ITER_ID"
+              CURRENT_ITERATION_TITLE="$TITLE"
+              break
+            fi
+          done < <(echo "$PROJECT_DATA" | jq -c '
+            .data.organization.projectV2.fields.nodes[]
+            | select(.name == "Sprint")
+            | .configuration.iterations[]')
+
+          if [[ -z "$CURRENT_ITERATION_ID" ]]; then
+            echo "No active sprint found, nothing to do"
+            exit 0
+          fi
+
+          echo "Current sprint: $CURRENT_ITERATION_TITLE"
+
+          # ── Fetch all project items with status and sprint ───────────────
+          CURSOR=""
+          UPDATED=0
+          while true; do
+            if [[ -z "$CURSOR" ]]; then
+              AFTER_ARG=""
+            else
+              AFTER_ARG=", after: \"$CURSOR\""
+            fi
+
+            ITEMS=$(gh api graphql -f query="
+              query {
+                node(id: \"$PROJECT_ID\") {
+                  ... on ProjectV2 {
+                    items(first: 100${AFTER_ARG}) {
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                      nodes {
+                        id
+                        fieldValueByName(name: \"Status\") {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            optionId
+                          }
+                        }
+                        sprint: fieldValueByName(name: \"Sprint\") {
+                          ... on ProjectV2ItemFieldIterationValue {
+                            iterationId
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ")
+
+            # Process each item: skip Backlog and already-sprinted
+            echo "$ITEMS" | jq -c '
+              .data.node.items.nodes[]
+              | select(
+                  .fieldValueByName.optionId != null
+                  and .sprint.iterationId == null
+                )' \
+            | while IFS= read -r item; do
+              ITEM_ID=$(echo "$item" | jq -r '.id')
+              STATUS_OPT=$(echo "$item" | jq -r '.fieldValueByName.optionId')
+
+              # Skip Backlog items
+              if [[ "$STATUS_OPT" == "$BACKLOG_OPTION_ID" ]]; then
+                continue
+              fi
+
+              echo "  Setting sprint on item $ITEM_ID"
+              gh api graphql -f query='
+                mutation(
+                  $projectId: ID!, $itemId: ID!,
+                  $fieldId: ID!, $iterationId: String!
+                ) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId
+                    itemId: $itemId
+                    fieldId: $fieldId
+                    value: { iterationId: $iterationId }
+                  }) { projectV2Item { id } }
+                }
+              ' -F projectId="$PROJECT_ID" \
+                -F itemId="$ITEM_ID" \
+                -F fieldId="$SPRINT_FIELD_ID" \
+                -F iterationId="$CURRENT_ITERATION_ID" \
+              > /dev/null
+              UPDATED=$((UPDATED + 1))
+            done
+
+            # Pagination
+            HAS_NEXT=$(echo "$ITEMS" | \
+              jq -r '.data.node.items.pageInfo.hasNextPage')
+            if [[ "$HAS_NEXT" != "true" ]]; then
+              break
+            fi
+            CURSOR=$(echo "$ITEMS" | \
+              jq -r '.data.node.items.pageInfo.endCursor')
+          done
+
+          echo "Done. Updated items with current sprint."
