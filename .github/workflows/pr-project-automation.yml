@@ -205,8 +205,15 @@ jobs:
           # ── Helper: update linked issues to a given status ────────────────
           process_linked_issues() {
             local status_option_id="$1"
+            # Strip HTML comments so template placeholders
+            # like <!-- Closes #123 --> are not matched
+            local body_no_comments
+            body_no_comments=$(
+              perl -0777 -pe 's/<!--.*?-->//gs' \
+                <<< "$PR_BODY"
+            )
             local linked
-            linked=$(echo "$PR_BODY" \
+            linked=$(echo "$body_no_comments" \
               | grep -oiE \
                 '(closes|fixes|resolves|close|fix|resolve)[[:space:]:]+#[0-9]+' \
               | grep -oE '[0-9]+' \
@@ -218,7 +225,11 @@ jobs:
                 "/repos/$REPO/issues/$issue_num" \
                 | jq -r '.node_id')
               issue_item_id=$(ensure_in_project "$issue_node_id")
-              set_status "$issue_item_id" "$status_option_id"
+              if ! set_status "$issue_item_id" \
+                "$status_option_id" 2>&1; then
+                echo "  Warning: could not update #$issue_num (archived?)"
+                continue
+              fi
               echo "  Issue #$issue_num status updated"
             done
           }
