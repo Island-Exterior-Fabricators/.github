@@ -1,0 +1,137 @@
+name: Auto-close stacked PR issues (reusable)
+
+# Closes issues referenced by inner PRs when the outer PR
+# of a stack merges into the default branch. Fills the gap
+# left by GitHub's native `Closes #N` keyword, which only
+# fires for PRs whose base IS the default branch — so
+# `Closes #N` on a stacked PR (base = feature branch) is
+# never honored, even after its commits reach the default
+# branch via the outer merge.
+#
+# Requires the GitHub App to have `issues: write`.
+
+on:
+  workflow_call:
+
+jobs:
+  close-stacked:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref ==
+      github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PROJECT_AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Checkout (full history needed for git log)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Close issues referenced by inner PRs
+        env:
+          GH_TOKEN:        ${{ steps.app-token.outputs.token }}
+          REPO:            ${{ github.repository }}
+          OUTER_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_SHA:       ${{ github.event.pull_request.merge_commit_sha }}
+          DEFAULT_BRANCH:  ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          echo "Outer PR #$OUTER_PR_NUMBER  merge $MERGE_SHA"
+
+          # ── Find parents of the merge commit ──────────────────────
+          # A true merge has 2 parents; squash/rebase merges have 1
+          # → no inner merge commits to walk, so nothing to do.
+          PARENTS=$(git rev-list --parents -n 1 "$MERGE_SHA" \
+                    | cut -d' ' -f2-)
+          PARENT_COUNT=$(wc -w <<< "$PARENTS")
+
+          if [[ "$PARENT_COUNT" -lt 2 ]]; then
+            echo "Squash/rebase merge — no inner PRs to walk."
+            exit 0
+          fi
+
+          PARENT_DEFAULT=$(awk '{print $1}' <<< "$PARENTS")
+
+          # ── Find inner PR numbers from inner merge commits ────────
+          INNER_PRS=$(git log --format='%s' \
+                       "$PARENT_DEFAULT..$MERGE_SHA" \
+                     | grep -oE 'Merge pull request #[0-9]+' \
+                     | grep -oE '[0-9]+' \
+                     | sort -u \
+                     | grep -vx "$OUTER_PR_NUMBER" \
+                     || true)
+
+          if [[ -z "$INNER_PRS" ]]; then
+            echo "No inner merge commits found."
+            exit 0
+          fi
+
+          OWNER="${REPO%/*}"
+          NAME="${REPO#*/}"
+
+          # ── For each inner PR, close any open issues it references ─
+          for inner_pr in $INNER_PRS; do
+            echo "Inner PR #$inner_pr"
+
+            # closingIssuesReferences includes both body-keyword links
+            # AND issues linked via the GitHub UI Development sidebar.
+            REFS=$(gh api graphql -f query='
+              query($owner: String!, $name: String!, $num: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $num) {
+                    closingIssuesReferences(first: 50) {
+                      nodes {
+                        number
+                        state
+                        repository { nameWithOwner }
+                      }
+                    }
+                  }
+                }
+              }
+            ' -F owner="$OWNER" \
+              -F name="$NAME" \
+              -F num="$inner_pr" \
+              | jq -c '.data.repository.pullRequest
+                       .closingIssuesReferences.nodes[]?')
+
+            if [[ -z "$REFS" ]]; then
+              echo "  No closing references."
+              continue
+            fi
+
+            while IFS= read -r ref; do
+              ISSUE_NUM=$(jq   -r '.number'                <<< "$ref")
+              ISSUE_STATE=$(jq -r '.state'                 <<< "$ref")
+              ISSUE_REPO=$(jq  -r '.repository.nameWithOwner' \
+                                                            <<< "$ref")
+
+              if [[ "$ISSUE_REPO" != "$REPO" ]]; then
+                echo "  #$ISSUE_NUM in $ISSUE_REPO — skip (cross-repo)"
+                continue
+              fi
+
+              if [[ "$ISSUE_STATE" == "CLOSED" ]]; then
+                echo "  #$ISSUE_NUM already closed — skip"
+                continue
+              fi
+
+              COMMENT="Resolved by #$inner_pr, "
+              COMMENT+="merged to $DEFAULT_BRANCH "
+              COMMENT+="via #$OUTER_PR_NUMBER "
+              COMMENT+="(commit ${MERGE_SHA:0:7})."
+              gh issue close "$ISSUE_NUM" -R "$REPO" -c "$COMMENT"
+              echo "  Closed #$ISSUE_NUM"
+            done <<< "$REFS"
+          done
+
+          echo "Done."
