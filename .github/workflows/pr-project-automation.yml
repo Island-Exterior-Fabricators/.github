@@ -276,6 +276,13 @@ jobs:
             echo "Status → In review"
             process_linked_issues "$IN_REVIEW_OPTION_ID"
 
+          elif [[ "$PR_ACTION" == "converted_to_draft" ]]; then
+
+            ITEM_ID=$(ensure_in_project "$PR_NODE_ID")
+            set_status "$ITEM_ID" "$IN_PROGRESS_OPTION_ID"
+            echo "Status → In progress"
+            process_linked_issues "$IN_PROGRESS_OPTION_ID"
+
           fi
 
           echo "Done."
