@@ -21,6 +21,15 @@ assert_eq "closed_start"          "2026-07-06" "$(field "$out" closed_start)"
 assert_eq "next is Sprint 33"     "Sprint 33" "$(field "$out" next_title)"
 assert_eq "3 iterations remain"   "3"         "$(field "$out" iterations_remaining)"
 
+echo "resolve-sprints: last active day of the sprint (2026-07-31)"
+out=$(run_at 2026-07-31)
+assert_eq "current is still Sprint 33" "Sprint 33" \
+  "$(field "$out" current_title)"
+assert_eq "closed is still Sprint 32"  "Sprint 32" \
+  "$(field "$out" closed_title)"
+assert_eq "next is still Sprint 33"    "Sprint 33" \
+  "$(field "$out" next_title)"
+
 echo "resolve-sprints: first day of the gap (2026-08-01)"
 out=$(run_at 2026-08-01)
 assert_eq "no current sprint"     ""          "$(field "$out" current_title)"
