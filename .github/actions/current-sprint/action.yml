@@ -1,0 +1,104 @@
+name: Resolve current sprint
+description: >
+  Resolve sprint boundaries for an org Projects V2 iteration field.
+  Outputs are empty when undefined — notably current-* during the gap
+  between two sprints.
+
+inputs:
+  github-token:
+    description: Token with project read access.
+    required: true
+  org:
+    description: Organization login.
+    required: false
+    default: Island-Exterior-Fabricators
+  project-number:
+    description: Project number.
+    required: false
+    default: '1'
+  today:
+    description: >
+      YYYY-MM-DD override for simulating a date. Empty uses the
+      current UTC date.
+    required: false
+    default: ''
+
+outputs:
+  project-id:
+    value: ${{ steps.resolve.outputs.project_id }}
+  sprint-field-id:
+    value: ${{ steps.resolve.outputs.sprint_field_id }}
+  current-id:
+    value: ${{ steps.resolve.outputs.current_id }}
+  current-title:
+    value: ${{ steps.resolve.outputs.current_title }}
+  closed-id:
+    value: ${{ steps.resolve.outputs.closed_id }}
+  closed-title:
+    value: ${{ steps.resolve.outputs.closed_title }}
+  closed-start:
+    value: ${{ steps.resolve.outputs.closed_start }}
+  next-id:
+    value: ${{ steps.resolve.outputs.next_id }}
+  next-title:
+    value: ${{ steps.resolve.outputs.next_title }}
+  last-configured-title:
+    value: ${{ steps.resolve.outputs.last_configured_title }}
+  last-configured-end:
+    value: ${{ steps.resolve.outputs.last_configured_end }}
+  iterations-remaining:
+    value: ${{ steps.resolve.outputs.iterations_remaining }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        ORG: ${{ inputs.org }}
+        PROJECT_NUMBER: ${{ inputs.project-number }}
+        TODAY_INPUT: ${{ inputs.today }}
+      run: |
+        set -euo pipefail
+
+        TODAY="${TODAY_INPUT:-}"
+        [[ -n "$TODAY" ]] || TODAY="$(date -u +%Y-%m-%d)"
+
+        META=$(gh api graphql -f query='
+          query($org: String!, $number: Int!) {
+            organization(login: $org) {
+              projectV2(number: $number) {
+                id
+                fields(first: 30) {
+                  nodes {
+                    ... on ProjectV2IterationField {
+                      id name
+                      configuration {
+                        iterations {
+                          id title startDate duration
+                        }
+                        completedIterations {
+                          id title startDate duration
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' -F org="$ORG" -F number="$PROJECT_NUMBER")
+
+        P=$(jq -r '.data.organization.projectV2' <<<"$META")
+
+        {
+          echo "project_id=$(jq -r '.id' <<<"$P")"
+          echo "sprint_field_id=$(jq -r '
+            .fields.nodes[] | select(.name=="Sprint") | .id' <<<"$P")"
+          jq -c '.fields.nodes[] | select(.name=="Sprint")
+                 | .configuration' <<<"$P" \
+            | TODAY="$TODAY" bash \
+              "${GITHUB_ACTION_PATH}/../../../scripts/lib/resolve-sprints.sh"
+        } >>"$GITHUB_OUTPUT"
+
+        echo "Resolved against $TODAY" >&2
