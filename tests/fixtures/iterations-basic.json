@@ -1,0 +1,14 @@
+{
+  "iterations": [
+    { "id": "i33", "title": "Sprint 33",
+      "startDate": "2026-07-20", "duration": 12 },
+    { "id": "i34", "title": "Sprint 34",
+      "startDate": "2026-08-03", "duration": 12 },
+    { "id": "i35", "title": "Sprint 35",
+      "startDate": "2026-08-17", "duration": 12 }
+  ],
+  "completedIterations": [
+    { "id": "i32", "title": "Sprint 32",
+      "startDate": "2026-07-06", "duration": 12 }
+  ]
+}
