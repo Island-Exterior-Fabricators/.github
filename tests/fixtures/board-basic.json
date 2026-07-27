@@ -1,0 +1,59 @@
+{
+  "items": [
+    { "id": "it-ls-old", "title": "Old parked work",
+      "status": "Last Sprint",
+      "sprint": { "iterationId": "i31", "title": "Sprint 31",
+                  "startDate": "2026-06-22", "duration": 12 },
+      "content": { "type": "Issue", "number": 572,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-done-closed", "title": "Finished in the closed sprint",
+      "status": "Done",
+      "sprint": { "iterationId": "i33", "title": "Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 },
+      "content": { "type": "PullRequest", "number": 630,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-done-older", "title": "Leftover from an earlier sprint",
+      "status": "Done",
+      "sprint": { "iterationId": "i28", "title": "Sprint 28",
+                  "startDate": "2026-05-11", "duration": 12 },
+      "content": { "type": "Issue", "number": 516,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-done-future", "title": "Done in the sprint after close",
+      "status": "Done",
+      "sprint": { "iterationId": "i34", "title": "Sprint 34",
+                  "startDate": "2026-08-03", "duration": 12 },
+      "content": { "type": "PullRequest", "number": 999,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-done-nosprint", "title": "Done but never sprinted",
+      "status": "Done",
+      "content": { "type": "Issue", "number": 777,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-wip-slipped", "title": "Still in progress, slipped before",
+      "status": "In progress", "slips": 1,
+      "sprint": { "iterationId": "i33", "title": "Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 },
+      "content": { "type": "Issue", "number": 594,
+                   "repository": "Island-Exterior-Fabricators/IslandBOMApp" } },
+
+    { "id": "it-review-fresh", "title": "In review, first slip",
+      "status": "In review",
+      "sprint": { "iterationId": "i33", "title": "Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 },
+      "content": { "type": "PullRequest", "number": 12,
+                   "repository": "Island-Exterior-Fabricators/IslandModelBridge" } },
+
+    { "id": "it-draft", "title": "A draft note with no number",
+      "status": "In progress",
+      "sprint": { "iterationId": "i33", "title": "Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 },
+      "content": {} },
+
+    { "id": "it-backlog", "title": "Untouched backlog item",
+      "status": "Backlog" }
+  ]
+}
