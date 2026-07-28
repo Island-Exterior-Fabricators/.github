@@ -1,0 +1,22 @@
+name: Sprint Automation Script Tests
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run script test suite
+        run: bash tests/run-all.sh

@@ -32,6 +32,11 @@ if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
   exit 2
 fi
 
+if [[ -n "${TODAY:-}" && ! "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "sprint-close: TODAY must be YYYY-MM-DD (got '$TODAY')" >&2
+  exit 2
+fi
+
 failures=0
 
 # ── project + field metadata ────────────────────────────────────────
@@ -70,16 +75,18 @@ fi
 
 field_id() {
   jq -r --arg n "$1" \
-    '.fields.nodes[] | select(.name==$n) | .id // empty' <<<"$P"
+    '.fields.nodes[] | select(.name==$n) | .id // empty' <<<"$P" \
+    | tr -d '\r'
 }
 
-PROJECT_ID=$(jq -r '.id' <<<"$P")
+PROJECT_ID=$(jq -r '.id' <<<"$P" | tr -d '\r')
 STATUS_FIELD_ID=$(field_id Status)
 SPRINT_FIELD_ID=$(field_id Sprint)
 SLIPS_FIELD_ID=$(field_id Slips)
 LAST_SPRINT_OPTION_ID=$(jq -r '
   .fields.nodes[] | select(.name=="Status")
-  | .options[] | select(.name=="Last Sprint") | .id // empty' <<<"$P")
+  | .options[] | select(.name=="Last Sprint") | .id // empty' \
+  <<<"$P" | tr -d '\r')
 
 for v in PROJECT_ID STATUS_FIELD_ID SPRINT_FIELD_ID SLIPS_FIELD_ID \
          LAST_SPRINT_OPTION_ID; do
@@ -94,11 +101,13 @@ done
 # but `read` keeps the \r — so only the read-consumed streams below
 # need stripping.
 declare -A S
+SPRINTS=$(jq -c '.fields.nodes[] | select(.name=="Sprint") | .configuration' \
+            <<<"$P" \
+            | TODAY="$TODAY" bash "$HERE/lib/resolve-sprints.sh" \
+            | tr -d '\r')
 while IFS='=' read -r k v; do
   [[ -n "$k" ]] && S["$k"]="$v"
-done < <(jq -c '.fields.nodes[] | select(.name=="Sprint") | .configuration' \
-           <<<"$P" | TODAY="$TODAY" "$HERE/lib/resolve-sprints.sh" \
-           | tr -d '\r')
+done <<<"$SPRINTS"
 
 echo "today=$TODAY current=${S[current_title]:-none}" \
      "closed=${S[closed_title]:-none} next=${S[next_title]:-none}"
@@ -109,11 +118,16 @@ if [[ -z "${S[closed_id]:-}" ]]; then
 fi
 
 # ── plan ────────────────────────────────────────────────────────────
-ITEM_LIMIT=500
+ITEM_LIMIT="${ITEM_LIMIT:-500}"
 ITEMS=$(gh project item-list "$PROJECT_NUMBER" --owner "$ORG" \
           --format json --limit "$ITEM_LIMIT")
 
-ITEM_TOTAL=$(jq -r '.totalCount // 0' <<<"$ITEMS")
+ITEM_TOTAL=$(jq -r '.totalCount // 0' <<<"$ITEMS" | tr -d '\r')
+if [[ ! "$ITEM_TOTAL" =~ ^[0-9]+$ ]]; then
+  echo "sprint-close: item-list returned a non-numeric totalCount" \
+       "('$ITEM_TOTAL'); treating as a configuration failure" >&2
+  exit 2
+fi
 if [[ "$ITEM_TOTAL" -gt "$ITEM_LIMIT" ]]; then
   echo "sprint-close: item-list truncated ($ITEM_LIMIT of" \
        "$ITEM_TOTAL items); raise ITEM_LIMIT and re-run rather" \
@@ -125,7 +139,7 @@ fi
 # CRLF, so plan-rollover.sh's own multi-line output still needs it
 # stripped here (see the comment above the `S`-array build).
 PLAN=$(CLOSED_ID="${S[closed_id]}" CLOSED_START="${S[closed_start]}" \
-       "$HERE/lib/plan-rollover.sh" <<<"$ITEMS" | tr -d '\r')
+       bash "$HERE/lib/plan-rollover.sh" <<<"$ITEMS" | tr -d '\r')
 
 GUARD=$(awk -F'\t' '$1=="guard"{print $2}' <<<"$PLAN")
 case "$GUARD" in

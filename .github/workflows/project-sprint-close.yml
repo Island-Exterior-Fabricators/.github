@@ -9,13 +9,19 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Plan the rollover without mutating the board.
+        description: >-
+          Plan the rollover without mutating the board. Defaults to
+          true; uncheck to run a live manual rollover.
         type: boolean
-        default: false
+        default: true
       today:
         description: YYYY-MM-DD override for simulating a boundary.
         type: string
         default: ''
+
+concurrency:
+  group: sprint-close-rollover
+  cancel-in-progress: false
 
 jobs:
   rollover:

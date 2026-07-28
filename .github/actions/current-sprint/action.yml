@@ -91,6 +91,12 @@ runs:
 
         P=$(jq -r '.data.organization.projectV2' <<<"$META")
 
+        if [[ -z "$P" || "$P" == "null" ]]; then
+          echo "current-sprint: no project $PROJECT_NUMBER found for" \
+               "org $ORG (check the org name and project number)" >&2
+          exit 2
+        fi
+
         {
           echo "project_id=$(jq -r '.id' <<<"$P")"
           echo "sprint_field_id=$(jq -r '

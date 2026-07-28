@@ -168,6 +168,14 @@ out=$(run "$LOG" "$FAKE_GH_BIN" \
 assert_eq "exit 2" "2" "$(exit_of "$out")"
 assert_eq "zero mutations" "0" "$(log_lines "$LOG")"
 
+echo "sprint-close: TODAY=garbage exits 2 with zero mutations"
+LOG="$WORK/badtoday.log"
+out=$(run "$LOG" "$FAKE_GH_BIN" \
+        FAKE_GH_META="$META_CLEAR" FAKE_GH_ITEMS="$ITEMS_CLEAR" \
+        TODAY=garbage DRY_RUN=false)
+assert_eq "exit 2" "2" "$(exit_of "$out")"
+assert_eq "zero mutations" "0" "$(log_lines "$LOG")"
+
 echo "sprint-close: a carry item whose title embeds a literal TAB no" \
      "longer shifts the slips field; it is still re-stamped and" \
      "Slips is correctly bumped from 2 to 3, with no crash"
