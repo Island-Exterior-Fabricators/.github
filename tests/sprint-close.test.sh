@@ -89,6 +89,12 @@ for id in FAKE_ITEM_CARRY_1 FAKE_ITEM_CARRY_2; do
     || carry_ok=0
 done
 assert_eq "iteration precedes number per carried item" "1" "$carry_ok"
+assert_eq "CARRY_1 slips written as 1 (was unset)" "1" \
+  "$(awk -F'\t' '$1=="number" && $2=="FAKE_ITEM_CARRY_1"{print $3}' \
+      "$LOG")"
+assert_eq "CARRY_2 slips written as 3 (was 2)" "3" \
+  "$(awk -F'\t' '$1=="number" && $2=="FAKE_ITEM_CARRY_2"{print $3}' \
+      "$LOG")"
 
 echo "sprint-close: one failed archive still attempts the rest and" \
      "still runs phases 2 and 3"
@@ -146,6 +152,13 @@ assert_eq "exit 0" "0" "$(exit_of "$out")"
 log_body="$(cat "$LOG"; printf x)"
 if [[ "$log_body" == *$'\r'* ]]; then cr_found=1; else cr_found=0; fi
 assert_eq "no \\r in any recorded mutation argument" "0" "$cr_found"
+# A CR landing on the label field is harmless — the reliable signal
+# that CRLF hasn't corrupted parsing upstream is the Slips value
+# actually written: it silently drops to 1 for every carried item if
+# CR contamination breaks the slips parse anywhere on the way here.
+assert_eq "CARRY_2 slips still written as 3 under CRLF" "3" \
+  "$(awk -F'\t' '$1=="number" && $2=="FAKE_ITEM_CARRY_2"{print $3}' \
+      "$LOG")"
 
 echo "sprint-close: DRY_RUN=1 exits 2 with zero mutations"
 LOG="$WORK/badval.log"
@@ -155,9 +168,9 @@ out=$(run "$LOG" "$FAKE_GH_BIN" \
 assert_eq "exit 2" "2" "$(exit_of "$out")"
 assert_eq "zero mutations" "0" "$(log_lines "$LOG")"
 
-echo "sprint-close: a carry item whose title embeds a literal TAB" \
-     "shifts the slips field; it is still re-stamped and Slips" \
-     "written as 1, with no crash"
+echo "sprint-close: a carry item whose title embeds a literal TAB no" \
+     "longer shifts the slips field; it is still re-stamped and" \
+     "Slips is correctly bumped from 2 to 3, with no crash"
 LOG="$WORK/tabslips.log"
 out=$(run "$LOG" "$FAKE_GH_BIN" \
         FAKE_GH_META="$META_CLEAR" FAKE_GH_ITEMS="$ITEMS_TAB_SLIPS" \
@@ -165,7 +178,7 @@ out=$(run "$LOG" "$FAKE_GH_BIN" \
 assert_eq "exit 0" "0" "$(exit_of "$out")"
 assert_eq "iteration still written" "1" \
   "$(awk -F'\t' '$1=="iteration"' "$LOG" | grep -c .)"
-assert_eq "slips written as 1" "1" \
+assert_eq "slips written as 3, not reset by the tab" "3" \
   "$(awk -F'\t' '$1=="number"{print $3}' "$LOG")"
 
 exit $((FAILED > 0))

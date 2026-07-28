@@ -33,16 +33,16 @@ assert_eq "carry set" "it-draft it-review-fresh it-wip-slipped " \
 
 echo "plan-rollover: slips default to 0 and are read when present"
 assert_eq "slipped item reports 1" "1" \
-  "$(awk -F'\t' '$1=="carry" && $2=="it-wip-slipped"{print $4}' <<<"$out")"
+  "$(awk -F'\t' '$1=="carry" && $2=="it-wip-slipped"{print $3}' <<<"$out")"
 assert_eq "fresh item reports 0" "0" \
-  "$(awk -F'\t' '$1=="carry" && $2=="it-review-fresh"{print $4}' <<<"$out")"
+  "$(awk -F'\t' '$1=="carry" && $2=="it-review-fresh"{print $3}' <<<"$out")"
 
 echo "plan-rollover: labels"
 assert_eq "numbered label" \
   "Island-Exterior-Fabricators/IslandBOMApp#630 — Finished in the closed sprint" \
   "$(awk -F'\t' '$1=="collect" && $2=="it-done-closed"{print $3}' <<<"$out")"
 assert_eq "draft label falls back to title" "A draft note with no number" \
-  "$(awk -F'\t' '$1=="carry" && $2=="it-draft"{print $3}' <<<"$out")"
+  "$(awk -F'\t' '$1=="carry" && $2=="it-draft"{print $4}' <<<"$out")"
 
 echo "plan-rollover: guard trips once Last Sprint holds a closed-sprint item"
 tripped=$(jq '.items[0].sprint = {"iterationId":"i33","title":"Sprint 33","startDate":"2026-07-20","duration":12}' \

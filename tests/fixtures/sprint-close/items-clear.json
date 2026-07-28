@@ -26,7 +26,7 @@
                   "startDate": "2026-07-06", "duration": 12 } },
 
     { "id": "FAKE_ITEM_CARRY_1", "title": "Still in progress",
-      "status": "In progress", "slips": 0,
+      "status": "In progress",
       "sprint": { "iterationId": "FAKE_ITER_33",
                   "title": "Fake Sprint 33",
                   "startDate": "2026-07-20", "duration": 12 } },

@@ -11,7 +11,11 @@
 #   guard    <tripped|clear>
 #   archive  <itemId>  <label>
 #   collect  <itemId>  <label>
-#   carry    <itemId>  <label>  <slips>
+#   carry    <itemId>  <slips>  <label>
+#
+# label is free text from an issue title, so it is always the last
+# field: a literal TAB in a title then only ever spills into label
+# itself, never shifting a numeric field like slips.
 #
 # Sprints are compared by iterationId and startDate, never by title:
 # board history includes iterations named "Holiday iteration" and
@@ -43,5 +47,5 @@ jq -r --arg cid "$CLOSED_ID" --arg cstart "$CLOSED_START" '
     ( $items[]
       | select(.status == "In progress" or .status == "In review")
       | select(.sprint != null and .sprint.iterationId == $cid)
-      | "carry\t\(.id)\t\(fmt_label)\t\(.slips // 0)" )
+      | "carry\t\(.id)\t\(.slips // 0)\t\(fmt_label)" )
 '

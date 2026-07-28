@@ -225,7 +225,7 @@ if [[ -z "${S[next_id]:-}" ]]; then
        "Add another iteration in board settings." >&2
 else
   echo "phase 3: carrying $(count carry) items to ${S[next_title]}"
-  while IFS=$'\t' read -r _ id label slips; do
+  while IFS=$'\t' read -r _ id slips label; do
     [[ -z "${id:-}" ]] && continue
     [[ "${slips:-0}" =~ ^[0-9]+$ ]] || slips=0
     next=$(( ${slips:-0} + 1 ))
