@@ -1,0 +1,10 @@
+{
+  "totalCount": 1,
+  "items": [
+    { "id": "FAKE_ITEM_TRIPPED", "title": "Already rolled over",
+      "status": "Last Sprint",
+      "sprint": { "iterationId": "FAKE_ITER_33",
+                  "title": "Fake Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 } }
+  ]
+}

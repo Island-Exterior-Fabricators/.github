@@ -1,0 +1,10 @@
+{
+  "totalCount": 1,
+  "items": [
+    { "id": "FAKE_ITEM_TABTITLE", "title": "Weird\ttitle",
+      "status": "In progress", "slips": 2,
+      "sprint": { "iterationId": "FAKE_ITER_33",
+                  "title": "Fake Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 } }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "data": {
+    "organization": {
+      "projectV2": {
+        "id": "FAKE_PROJECT_ID",
+        "fields": {
+          "nodes": [
+            { "id": "FAKE_STATUS_FIELD_ID", "name": "Status",
+              "options": [
+                { "id": "FAKE_OPT_BACKLOG", "name": "Backlog" },
+                { "id": "FAKE_OPT_INPROGRESS", "name": "In progress" },
+                { "id": "FAKE_OPT_INREVIEW", "name": "In review" },
+                { "id": "FAKE_OPT_DONE", "name": "Done" },
+                { "id": "FAKE_OPT_LAST_SPRINT", "name": "Last Sprint" }
+              ] },
+            { "id": "FAKE_SPRINT_FIELD_ID", "name": "Sprint",
+              "configuration": {
+                "iterations": [
+                  { "id": "FAKE_ITER_34", "title": "Fake Sprint 34",
+                    "startDate": "2026-08-03", "duration": 12 },
+                  { "id": "FAKE_ITER_35", "title": "Fake Sprint 35",
+                    "startDate": "2026-08-17", "duration": 12 }
+                ],
+                "completedIterations": [
+                  { "id": "FAKE_ITER_32", "title": "Fake Sprint 32",
+                    "startDate": "2026-07-06", "duration": 12 },
+                  { "id": "FAKE_ITER_33", "title": "Fake Sprint 33",
+                    "startDate": "2026-07-20", "duration": 12 }
+                ]
+              } },
+            { "id": "FAKE_SLIPS_FIELD_ID", "name": "Slips" }
+          ]
+        }
+      }
+    }
+  }
+}

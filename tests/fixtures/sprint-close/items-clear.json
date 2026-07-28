@@ -1,0 +1,40 @@
+{
+  "totalCount": 6,
+  "items": [
+    { "id": "FAKE_ITEM_ARCH_1", "title": "Old parked work 1",
+      "status": "Last Sprint",
+      "sprint": { "iterationId": "FAKE_ITER_31",
+                  "title": "Fake Sprint 31",
+                  "startDate": "2026-06-22", "duration": 12 } },
+
+    { "id": "FAKE_ITEM_ARCH_2", "title": "Old parked work 2",
+      "status": "Last Sprint",
+      "sprint": { "iterationId": "FAKE_ITER_31",
+                  "title": "Fake Sprint 31",
+                  "startDate": "2026-06-22", "duration": 12 } },
+
+    { "id": "FAKE_ITEM_DONE_1", "title": "Finished in the closed sprint",
+      "status": "Done",
+      "sprint": { "iterationId": "FAKE_ITER_33",
+                  "title": "Fake Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 } },
+
+    { "id": "FAKE_ITEM_DONE_2", "title": "Finished earlier",
+      "status": "Done",
+      "sprint": { "iterationId": "FAKE_ITER_32",
+                  "title": "Fake Sprint 32",
+                  "startDate": "2026-07-06", "duration": 12 } },
+
+    { "id": "FAKE_ITEM_CARRY_1", "title": "Still in progress",
+      "status": "In progress", "slips": 0,
+      "sprint": { "iterationId": "FAKE_ITER_33",
+                  "title": "Fake Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 } },
+
+    { "id": "FAKE_ITEM_CARRY_2", "title": "In review, slipped before",
+      "status": "In review", "slips": 2,
+      "sprint": { "iterationId": "FAKE_ITER_33",
+                  "title": "Fake Sprint 33",
+                  "startDate": "2026-07-20", "duration": 12 } }
+  ]
+}

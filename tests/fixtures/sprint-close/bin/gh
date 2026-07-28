@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Fake `gh` for tests/sprint-close.test.sh. Never touches the network.
+#
+# `gh project item-list ...`     -> cat $FAKE_GH_ITEMS
+# `gh api graphql ...` metadata  -> cat $FAKE_GH_META
+#   (recognised by the "number=" arg, only the metadata query passes
+#   an org + project number; mutations never do)
+# `gh api graphql ...` mutation  -> append one line to $FAKE_GH_LOG:
+#     <type>\t<itemId>\t<extra>
+#   type is archive|select|iteration|number; extra is the option id,
+#   iteration id, or number value (empty for archive).
+#
+# Set FAKE_GH_FAIL_ITEM to an item id to make its archive mutation
+# report failure (stderr + exit 1) while still recording the attempt.
+set -uo pipefail
+
+: "${FAKE_GH_LOG:?FAKE_GH_LOG is required}"
+
+if [[ "${1:-}" == "project" && "${2:-}" == "item-list" ]]; then
+  cat "${FAKE_GH_ITEMS:?FAKE_GH_ITEMS is required}"
+  exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+  query=""
+  item_id=""
+  option_id=""
+  value=""
+  is_meta=false
+  prev=""
+  for a in "$@"; do
+    case "$prev" in
+      -f|-F)
+        case "$a" in
+          query=*)  query="${a#query=}" ;;
+          number=*) is_meta=true ;;
+          i=*)      item_id="${a#i=}" ;;
+          o=*)      option_id="${a#o=}" ;;
+          v=*)      value="${a#v=}" ;;
+        esac
+        ;;
+    esac
+    prev="$a"
+  done
+
+  if $is_meta; then
+    cat "${FAKE_GH_META:?FAKE_GH_META is required}"
+    exit 0
+  fi
+
+  type=""
+  case "$query" in
+    *archiveProjectV2Item*) type=archive ;;
+    *singleSelectOptionId*) type=select ;;
+    *iterationId*)          type=iteration ;;
+    *'Float!'*)             type=number ;;
+    *)
+      echo "fake gh: unrecognized mutation query" >&2
+      exit 1
+      ;;
+  esac
+
+  extra="$option_id$value"
+  printf '%s\t%s\t%s\n' "$type" "$item_id" "$extra" >>"$FAKE_GH_LOG"
+
+  if [[ "$type" == "archive" && -n "${FAKE_GH_FAIL_ITEM:-}" \
+        && "$item_id" == "$FAKE_GH_FAIL_ITEM" ]]; then
+    echo "fake gh: simulated archive failure for $item_id" >&2
+    exit 1
+  fi
+
+  echo '{"data":{}}'
+  exit 0
+fi
+
+echo "fake gh: unhandled invocation: $*" >&2
+exit 1

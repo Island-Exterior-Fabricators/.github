@@ -26,6 +26,12 @@ DRY_RUN="${DRY_RUN:-false}"
 TODAY="${TODAY:-$(date -u +%Y-%m-%d)}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
+  echo "sprint-close: DRY_RUN must be 'true' or 'false'" \
+       "(got '$DRY_RUN')" >&2
+  exit 2
+fi
+
 failures=0
 
 # ── project + field metadata ────────────────────────────────────────
@@ -55,6 +61,13 @@ META=$(gh api graphql -f query='
 
 P=$(jq -r '.data.organization.projectV2' <<<"$META")
 
+if [[ -z "$P" || "$P" == "null" ]]; then
+  echo "sprint-close: no project $PROJECT_NUMBER found for org" \
+       "$ORG (check the org name, project number, and that the" \
+       "token has project scope)" >&2
+  exit 2
+fi
+
 field_id() {
   jq -r --arg n "$1" \
     '.fields.nodes[] | select(.name==$n) | .id // empty' <<<"$P"
@@ -77,6 +90,9 @@ for v in PROJECT_ID STATUS_FIELD_ID SPRINT_FIELD_ID SLIPS_FIELD_ID \
 done
 
 # ── sprint boundaries ───────────────────────────────────────────────
+# jq.exe emits CRLF on Windows. $( ) strips the whole trailing CRLF,
+# but `read` keeps the \r — so only the read-consumed streams below
+# need stripping.
 declare -A S
 while IFS='=' read -r k v; do
   [[ -n "$k" ]] && S["$k"]="$v"
@@ -93,17 +109,39 @@ if [[ -z "${S[closed_id]:-}" ]]; then
 fi
 
 # ── plan ────────────────────────────────────────────────────────────
+ITEM_LIMIT=500
 ITEMS=$(gh project item-list "$PROJECT_NUMBER" --owner "$ORG" \
-          --format json --limit 500)
+          --format json --limit "$ITEM_LIMIT")
 
+ITEM_TOTAL=$(jq -r '.totalCount // 0' <<<"$ITEMS")
+if [[ "$ITEM_TOTAL" -gt "$ITEM_LIMIT" ]]; then
+  echo "sprint-close: item-list truncated ($ITEM_LIMIT of" \
+       "$ITEM_TOTAL items); raise ITEM_LIMIT and re-run rather" \
+       "than act on a partial snapshot" >&2
+  exit 2
+fi
+
+# jq.exe emits CRLF on Windows; $( ) strips only the whole trailing
+# CRLF, so plan-rollover.sh's own multi-line output still needs it
+# stripped here (see the comment above the `S`-array build).
 PLAN=$(CLOSED_ID="${S[closed_id]}" CLOSED_START="${S[closed_start]}" \
        "$HERE/lib/plan-rollover.sh" <<<"$ITEMS" | tr -d '\r')
 
-if [[ "$(awk -F'\t' '$1=="guard"{print $2}' <<<"$PLAN")" == "tripped" ]]
-then
-  echo "Rollover for ${S[closed_title]} has already run; nothing to do."
-  exit 0
-fi
+GUARD=$(awk -F'\t' '$1=="guard"{print $2}' <<<"$PLAN")
+case "$GUARD" in
+  tripped)
+    echo "Rollover for ${S[closed_title]} has already run;" \
+         "nothing to do."
+    exit 0
+    ;;
+  clear)
+    ;;
+  *)
+    echo "sprint-close: unexpected guard value '$GUARD' from" \
+         "plan-rollover.sh; refusing to archive" >&2
+    exit 2
+    ;;
+esac
 
 [[ "$DRY_RUN" == "true" ]] && echo "DRY RUN — no mutations will be sent"
 
@@ -120,23 +158,27 @@ archive_item() {
 }
 
 set_single_select() { # itemId fieldId optionId
+  # $o is String!, so it must be -f: -F applies gh's type magic and
+  # would coerce an all-digit option id to a JSON number.
   gql -f query='
     mutation($p: ID!, $i: ID!, $f: ID!, $o: String!) {
       updateProjectV2ItemFieldValue(input: {
         projectId: $p, itemId: $i, fieldId: $f,
         value: { singleSelectOptionId: $o }
       }) { projectV2Item { id } }
-    }' -F p="$PROJECT_ID" -F i="$1" -F f="$2" -F o="$3"
+    }' -F p="$PROJECT_ID" -F i="$1" -F f="$2" -f o="$3"
 }
 
 set_iteration() { # itemId fieldId iterationId
+  # $v is String! here too (an iteration id, not the Slips number
+  # below) — same -f reasoning as set_single_select.
   gql -f query='
     mutation($p: ID!, $i: ID!, $f: ID!, $v: String!) {
       updateProjectV2ItemFieldValue(input: {
         projectId: $p, itemId: $i, fieldId: $f,
         value: { iterationId: $v }
       }) { projectV2Item { id } }
-    }' -F p="$PROJECT_ID" -F i="$1" -F f="$2" -F v="$3"
+    }' -F p="$PROJECT_ID" -F i="$1" -F f="$2" -f v="$3"
 }
 
 set_number() { # itemId fieldId number
@@ -158,8 +200,8 @@ while IFS=$'\t' read -r _ id label; do
   [[ -z "${id:-}" ]] && continue
   echo "  $label"
   [[ "$DRY_RUN" == "true" ]] && continue
-  if ! archive_item "$id" 2>&1; then
-    echo "  ERROR archiving $label (item $id)" >&2
+  if ! err=$(archive_item "$id" 2>&1); then
+    echo "  ERROR archiving $label (item $id): $err" >&2
     failures=$((failures + 1))
   fi
 done < <(rows archive)
@@ -170,9 +212,9 @@ while IFS=$'\t' read -r _ id label; do
   [[ -z "${id:-}" ]] && continue
   echo "  $label"
   [[ "$DRY_RUN" == "true" ]] && continue
-  if ! set_single_select "$id" "$STATUS_FIELD_ID" \
-       "$LAST_SPRINT_OPTION_ID" 2>&1; then
-    echo "  ERROR moving $label (item $id)" >&2
+  if ! err=$(set_single_select "$id" "$STATUS_FIELD_ID" \
+       "$LAST_SPRINT_OPTION_ID" 2>&1); then
+    echo "  ERROR moving $label (item $id): $err" >&2
     failures=$((failures + 1))
   fi
 done < <(rows collect)
@@ -185,16 +227,18 @@ else
   echo "phase 3: carrying $(count carry) items to ${S[next_title]}"
   while IFS=$'\t' read -r _ id label slips; do
     [[ -z "${id:-}" ]] && continue
+    [[ "${slips:-0}" =~ ^[0-9]+$ ]] || slips=0
     next=$(( ${slips:-0} + 1 ))
     echo "  $label (slips ${slips:-0} -> $next)"
     [[ "$DRY_RUN" == "true" ]] && continue
-    if ! set_iteration "$id" "$SPRINT_FIELD_ID" "${S[next_id]}" 2>&1; then
-      echo "  ERROR re-stamping $label (item $id)" >&2
+    if ! err=$(set_iteration "$id" "$SPRINT_FIELD_ID" \
+         "${S[next_id]}" 2>&1); then
+      echo "  ERROR re-stamping $label (item $id): $err" >&2
       failures=$((failures + 1))
       continue
     fi
-    if ! set_number "$id" "$SLIPS_FIELD_ID" "$next" 2>&1; then
-      echo "  ERROR bumping Slips on $label (item $id)" >&2
+    if ! err=$(set_number "$id" "$SLIPS_FIELD_ID" "$next" 2>&1); then
+      echo "  ERROR bumping Slips on $label (item $id): $err" >&2
       failures=$((failures + 1))
     fi
   done < <(rows carry)
