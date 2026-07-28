@@ -1,0 +1,44 @@
+name: Sprint Close Board Rollover
+
+on:
+  schedule:
+    # Daily. Cron cannot express a 14-day cadence, so the job checks
+    # whether a sprint has closed and exits early when none has. An
+    # hour after project-assign-sprint so sprint stamping settles.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Plan the rollover without mutating the board.
+        type: boolean
+        default: false
+      today:
+        description: YYYY-MM-DD override for simulating a boundary.
+        type: string
+        default: ''
+
+jobs:
+  rollover:
+    # Scheduled runs stay off until SPRINT_CLOSE_ENABLED is set to
+    # 'true'. Manual dispatch always runs so dry runs work first.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || vars.SPRINT_CLOSE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PROJECT_AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Roll the board over
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          TODAY: ${{ inputs.today || '' }}
+        run: bash scripts/sprint-close.sh
