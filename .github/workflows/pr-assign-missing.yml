@@ -1,0 +1,115 @@
+name: Assign Authors to Unassigned PRs
+
+on:
+  schedule:
+    - cron: '30 6 * * *'  # 6:30 AM UTC daily
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report what would change without assigning'
+        type: boolean
+        default: false
+
+jobs:
+  assign-authors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PROJECT_AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Assign open PRs that have no assignee
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN:  ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          ORG="Island-Exterior-Fabricators"
+
+          # Schedule runs pass no inputs, so this is empty then
+          if [[ "${DRY_RUN:-}" == "true" ]]; then
+            echo "DRY RUN - no assignments will be made"
+          fi
+
+          ASSIGNED=0
+          SKIPPED=0
+
+          # gh api prints error bodies to stdout, so every listing is
+          # filtered to lines of the expected shape rather than being
+          # tested for emptiness
+          REPO_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+
+          # ── Repos this installation can reach ─────────────────────────────
+          REPOS=$(gh api "installation/repositories?per_page=100" \
+            --paginate \
+            --jq '.repositories[]
+                  | select(.archived == false) | .full_name' \
+            2>/dev/null | grep -E "$REPO_RE" || true)
+
+          if [[ -z "$REPOS" ]]; then
+            echo "Installation listing unusable, falling back to org repos"
+            REPOS=$(gh api "orgs/$ORG/repos?per_page=100" --paginate \
+              --jq '.[] | select(.archived == false) | .full_name' \
+              | grep -E "$REPO_RE" || true)
+          fi
+
+          REPO_COUNT=$(echo "$REPOS" | grep -c . || true)
+          if [[ "$REPO_COUNT" -eq 0 ]]; then
+            echo "Could not list any repositories - check app token"
+            exit 1
+          fi
+
+          echo "Scanning $REPO_COUNT repositories"
+
+          while IFS= read -r repo; do
+            [[ -z "$repo" ]] && continue
+
+            # Open PRs with no assignee, excluding bot authors
+            PRS=$(gh api \
+              "repos/$repo/pulls?state=open&per_page=100" --paginate \
+              --jq '.[]
+                    | select((.assignees | length) == 0)
+                    | select(.user.type == "User")
+                    | "\(.number)\t\(.user.login)"' \
+              2>/dev/null \
+              | grep -E '^[0-9]+[[:space:]][A-Za-z0-9_.-]+$' || true)
+
+            [[ -z "$PRS" ]] && continue
+
+            while IFS=$'\t' read -r num author; do
+              [[ -z "$num" ]] && continue
+
+              # Assignees are silently dropped for users without
+              # push access, so check up front and report instead
+              if ! gh api "repos/$repo/assignees/$author" \
+                --silent 2>/dev/null; then
+                echo "  $repo#$num: $author not assignable, skipping"
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+
+              if [[ "${DRY_RUN:-}" == "true" ]]; then
+                echo "  $repo#$num: would assign $author"
+                ASSIGNED=$((ASSIGNED + 1))
+                continue
+              fi
+
+              if gh api --method POST \
+                -H "Accept: application/vnd.github+json" \
+                "repos/$repo/issues/$num/assignees" \
+                -f "assignees[]=$author" > /dev/null 2>&1; then
+                echo "  $repo#$num: assigned $author"
+                ASSIGNED=$((ASSIGNED + 1))
+              else
+                echo "  $repo#$num: assign failed"
+                SKIPPED=$((SKIPPED + 1))
+              fi
+            done < <(echo "$PRS")
+          done < <(echo "$REPOS")
+
+          echo "Done. Assigned: $ASSIGNED, skipped: $SKIPPED"
