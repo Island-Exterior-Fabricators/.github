@@ -32,9 +32,19 @@ jobs:
 
           echo "Action: $PR_ACTION | PR #$PR_NUMBER | Draft: $PR_DRAFT"
 
-          # Fetch current PR body from API (not event payload, which can be stale)
-          PR_BODY=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" \
-            | jq -r '.body // ""')
+          # Fetch current PR from API (event payload can be stale)
+          PR_JSON=$(gh api "/repos/$REPO/pulls/$PR_NUMBER")
+          PR_BODY=$(jq -r '.body // ""' <<< "$PR_JSON")
+          PR_STATE=$(jq -r '.state'     <<< "$PR_JSON")
+
+          # A PR merged or closed while this run was queued is
+          # already Done on the board; a stale status write here
+          # would clobber that. Every action handled below only
+          # makes sense for an open PR.
+          if [[ "$PR_STATE" != "open" ]]; then
+            echo "PR #$PR_NUMBER is $PR_STATE; skipping"
+            exit 0
+          fi
 
           # ── Fetch project metadata ─────────────────────────────────────────
           PROJECT_DATA=$(gh api graphql -f query='
