@@ -2,6 +2,11 @@ name: PR Project Board Automation (reusable)
 
 on:
   workflow_call:
+    # Declared so callers can pass just this secret instead of
+    # `secrets: inherit`. Not required, so inherit keeps working.
+    secrets:
+      PROJECT_AUTOMATION_APP_KEY:
+        required: false
 
 jobs:
   automate:
@@ -24,6 +29,9 @@ jobs:
           PR_CREATOR:  ${{ github.event.pull_request.user.login }}
           PR_DRAFT:    ${{ github.event.pull_request.draft }}
           REPO:        ${{ github.repository }}
+          # Set only on `edited`, when the description changed
+          BODY_CHANGED: ${{ github.event.changes.body && 'true' || 'false' }}
+          PR_BODY_FROM: ${{ github.event.changes.body.from }}
         run: |
           set -euo pipefail
 
@@ -43,6 +51,13 @@ jobs:
           # makes sense for an open PR.
           if [[ "$PR_STATE" != "open" ]]; then
             echo "PR #$PR_NUMBER is $PR_STATE; skipping"
+            exit 0
+          fi
+
+          # A title- or base-only edit cannot link a new issue
+          if [[ "$PR_ACTION" == "edited" && \
+                "$BODY_CHANGED" != "true" ]]; then
+            echo "Edit did not change the description; skipping"
             exit 0
           fi
 
@@ -212,28 +227,43 @@ jobs:
             > /dev/null
           }
 
-          # ── Helper: update linked issues to a given status ────────────────
-          process_linked_issues() {
-            local status_option_id="$1"
+          # ── Helper: list issue numbers a PR body closes ───────────────────
+          linked_issues() {
+            local body="$1"
             # Strip HTML comments so template placeholders
             # like <!-- Closes #123 --> are not matched
             local body_no_comments
             body_no_comments=$(
               perl -0777 -pe 's/<!--.*?-->//gs' \
-                <<< "$PR_BODY"
+                <<< "$body"
             )
-            local linked
-            linked=$(echo "$body_no_comments" \
+            echo "$body_no_comments" \
               | grep -oiE \
                 '(closes|fixes|resolves|close|fix|resolve)[[:space:]:]+#[0-9]+' \
               | grep -oE '[0-9]+' \
-              || true)
+              || true
+          }
+
+          # ── Helper: update linked issues to a given status ────────────────
+          process_linked_issues() {
+            local status_option_id="$1"
+            # Issue numbers to leave alone, one per line
+            local skip="${2:-}"
+            local linked
+            linked=$(linked_issues "$PR_BODY")
             for issue_num in $linked; do
+              if grep -qx "$issue_num" <<< "$skip"; then
+                continue
+              fi
               echo "  Processing linked issue #$issue_num"
               local issue_node_id issue_item_id
-              issue_node_id=$(gh api \
+              # A typo'd number must not stop the other issues
+              if ! issue_node_id=$(gh api \
                 "/repos/$REPO/issues/$issue_num" \
-                | jq -r '.node_id')
+                | jq -r '.node_id'); then
+                echo "  Warning: #$issue_num not found; skipping"
+                continue
+              fi
               issue_item_id=$(ensure_in_project "$issue_node_id")
               if ! set_status "$issue_item_id" \
                 "$status_option_id" 2>&1; then
@@ -292,6 +322,17 @@ jobs:
             set_status "$ITEM_ID" "$IN_PROGRESS_OPTION_ID"
             echo "Status → In progress"
             process_linked_issues "$IN_PROGRESS_OPTION_ID"
+
+          elif [[ "$PR_ACTION" == "edited" ]]; then
+
+            # Move only issues this edit newly links. The PR's own
+            # status and issues linked before are left alone.
+            OLD_LINKED=$(linked_issues "$PR_BODY_FROM")
+            if [[ "$(jq -r '.draft' <<< "$PR_JSON")" == "true" ]]; then
+              process_linked_issues "$IN_PROGRESS_OPTION_ID" "$OLD_LINKED"
+            else
+              process_linked_issues "$IN_REVIEW_OPTION_ID" "$OLD_LINKED"
+            fi
 
           fi
 
