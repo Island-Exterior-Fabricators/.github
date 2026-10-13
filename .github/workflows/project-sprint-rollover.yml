@@ -1,0 +1,71 @@
+name: Sprint Rollover
+
+# Archives Last Sprint cards and moves Done cards into Last
+# Sprint once a new sprint has started. Stateless: most nights
+# nothing qualifies, and a repeat or missed night is safe. See
+# .github/scripts/sprint-rollover.sh.
+#
+# `schedule` and `workflow_dispatch` only run from the default
+# branch, so a PR that touches the rollover gets a dry run
+# against the live board instead.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # an hour after project-assign-sprint
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report only, change nothing
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/scripts/sprint-rollover*.sh
+      - .github/scripts/test-sprint-rollover.sh
+      - .github/workflows/project-sprint-rollover.yml
+
+permissions:
+  contents: read
+
+# A hand dispatch must not overlap the nightly run. PR dry runs
+# get their own group so they can't bump a queued board run.
+concurrency:
+  group: >-
+    project-sprint-rollover-${{ github.event_name == 'pull_request'
+    && github.ref || 'board' }}
+  cancel-in-progress: false
+
+jobs:
+  rollover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run helper tests
+        run: bash .github/scripts/test-sprint-rollover.sh
+
+      # Fork PRs get no secrets; they stop after the tests.
+      - name: Generate app token
+        if: >-
+          github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name
+          == github.repository
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PROJECT_AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Roll the board over
+        if: steps.app-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Writes only on schedule or an unchecked dispatch;
+          # anything else, PRs included, is a dry run.
+          DRY_RUN: >-
+            ${{ (github.event_name == 'schedule'
+            || (github.event_name == 'workflow_dispatch'
+                && !inputs.dry_run)) && 'false' || 'true' }}
+        run: bash .github/scripts/sprint-rollover.sh
