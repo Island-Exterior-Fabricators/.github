@@ -18,6 +18,16 @@ eastern_midnight_utc() {
   date -u -d "$local_iso" +%FT%TZ
 }
 
+# Fails with an Actions error annotation naming WHAT when
+# VALUE is empty, so a renamed field or option is diagnosable.
+need() {
+  local value="$1" what="$2"
+  if [[ -z "$value" ]]; then
+    echo "::error::$what not found" >&2
+    return 1
+  fi
+}
+
 # stdin: [{title, startDate}]. Prints the latest one that has
 # started by TODAY, or nothing.
 latest_started_sprint() {

@@ -99,6 +99,14 @@ check "issue label" "IslandBOMApp#717 Old" \
 check "draft label" "(draft) A draft" \
   "$(jq -r '.move[] | select(.id == "D4") | .label' <<< "$SEL")"
 
+# ── need ────────────────────────────────────────────────────
+check "need passes a value" "0" \
+  "$(need "abc" "Thing" 2>/dev/null; echo $?)"
+check "need fails on empty" "1" \
+  "$(need "" "Thing" 2>/dev/null; echo $?)"
+check "need says what is missing" "::error::Thing not found" \
+  "$(need "" "Thing" 2>&1 >/dev/null)"
+
 echo
 if ((FAILS)); then
   echo "$FAILS failed"

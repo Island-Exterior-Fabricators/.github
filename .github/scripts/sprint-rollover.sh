@@ -43,12 +43,16 @@ META="$(gh api graphql -f query='
   }' -F org="$ORG" -F number="$PROJECT_NUMBER")"
 
 P='.data.organization.projectV2'
-PROJECT_ID="$(jq -er "$P.id" <<< "$META")"
-STATUS_FIELD_ID="$(jq -er "$P.status.id" <<< "$META")"
-LAST_SPRINT_ID="$(jq -er "$P.status.options[]
+PROJECT_ID="$(jq -r "$P.id // empty" <<< "$META")"
+STATUS_FIELD_ID="$(jq -r "$P.status.id // empty" <<< "$META")"
+LAST_SPRINT_ID="$(jq -r "$P.status.options[]?
   | select(.name == \"Last Sprint\") | .id" <<< "$META")"
-ITERATIONS="$(jq -ec "$P.sprint.configuration
-  | .iterations + .completedIterations" <<< "$META")"
+ITERATIONS="$(jq -c "$P.sprint.configuration
+  | (.iterations + .completedIterations) // empty" <<< "$META")"
+need "$PROJECT_ID" "Project $ORG/$PROJECT_NUMBER"
+need "$STATUS_FIELD_ID" "Status field"
+need "$LAST_SPRINT_ID" "Status option 'Last Sprint'"
+need "$ITERATIONS" "Sprint iteration field"
 
 # ── Cutoff ──────────────────────────────────────────────────
 TODAY="$(eastern_today)"
