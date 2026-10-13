@@ -28,8 +28,24 @@ need() {
   fi
 }
 
+# stdin: [{id, name}]. Prints the id of the one Status option
+# called NAME; fails if there is none or more than one.
+status_option_id() {
+  local name="$1" ids
+  ids="$(jq -c --arg n "$name" '[.[] | select(.name == $n) | .id]')"
+  case "$(jq length <<< "$ids")" in
+    1) jq -r '.[0]' <<< "$ids" ;;
+    0) echo "::error::Status option '$name' not found" >&2
+       return 1 ;;
+    *) echo "::error::Status option '$name' is not unique" >&2
+       return 1 ;;
+  esac
+}
+
 # stdin: [{title, startDate}]. Prints the latest one that has
-# started by TODAY, or nothing.
+# started by TODAY, or nothing. Unlike project-assign-sprint,
+# which wants the sprint in progress, this stays on the last
+# sprint through the weekend gap: the cutoff is its start.
 latest_started_sprint() {
   jq -c --arg today "$1" '
     [.[] | select(.startDate <= $today)]
@@ -38,11 +54,14 @@ latest_started_sprint() {
 
 # stdin: [{id, status: {name, updatedAt}, content}].
 # Prints {archive, move, keep}, each [{id, label}]. Timestamps
-# are all ISO-8601 UTC, so string order is time order.
+# are all ISO-8601 UTC, so string order is time order. Items
+# whose content the token can't read come back empty.
 select_rollover() {
   jq -c --arg cutoff "$1" '
     def card_label:
-      if .content.repository then
+      if (.content // {}) == {} then
+        "(no access) \(.id)"
+      elif .content.repository then
         "\(.content.repository.name)#\(.content.number)"
         + " \(.content.title)"
       else

@@ -45,14 +45,16 @@ META="$(gh api graphql -f query='
 P='.data.organization.projectV2'
 PROJECT_ID="$(jq -r "$P.id // empty" <<< "$META")"
 STATUS_FIELD_ID="$(jq -r "$P.status.id // empty" <<< "$META")"
-LAST_SPRINT_ID="$(jq -r "$P.status.options[]?
-  | select(.name == \"Last Sprint\") | .id" <<< "$META")"
+OPTIONS="$(jq -c "$P.status.options // []" <<< "$META")"
 ITERATIONS="$(jq -c "$P.sprint.configuration
   | (.iterations + .completedIterations) // empty" <<< "$META")"
 need "$PROJECT_ID" "Project $ORG/$PROJECT_NUMBER"
 need "$STATUS_FIELD_ID" "Status field"
-need "$LAST_SPRINT_ID" "Status option 'Last Sprint'"
 need "$ITERATIONS" "Sprint iteration field"
+LAST_SPRINT_ID="$(status_option_id "Last Sprint" <<< "$OPTIONS")"
+# Selection matches Done by name; a renamed option would
+# silently match nothing.
+status_option_id "Done" <<< "$OPTIONS" > /dev/null
 
 # ── Cutoff ──────────────────────────────────────────────────
 TODAY="$(eastern_today)"
@@ -103,14 +105,44 @@ ITEMS="$(gh api graphql --paginate -f query='
 
 SEL="$(select_rollover "$CUTOFF" <<< "$ITEMS")"
 
-# ── Writes ──────────────────────────────────────────────────
-rows() { jq -r --arg k "$1" '.[$k][] | [.id, .label] | @tsv' \
-  <<< "$SEL"; }
+# ── Summary ─────────────────────────────────────────────────
+# Written on exit, so a run that fails partway still records
+# what it changed.
+ARCHIVED=()
+MOVED=()
+mapfile -t KEPT < <(jq -r '.keep[].label' <<< "$SEL")
 
-while IFS=$'\t' read -r id label; do
-  [[ -z "$id" ]] && continue
-  echo "archive  $label"
-  [[ "$DRY_RUN" == "false" ]] || continue
+section() {
+  local title="$1" label
+  shift
+  echo "### $title ($#)"
+  (($#)) || echo "- (none)"
+  for label in "$@"; do echo "- $label"; done
+  echo
+}
+write_summary() {
+  local status=$?
+  {
+    MODE="$([[ "$DRY_RUN" == "false" ]] && echo "" \
+      || echo " (dry run, nothing changed)")"
+    echo "## $SPRINT_TITLE rollover$MODE"
+    echo
+    if ((status)); then
+      echo "**Failed partway.** Only the cards listed below were"
+      echo "changed; the next run finishes the rest."
+      echo
+    fi
+    echo "Cutoff: $CUTOFF (00:00 Eastern, $SPRINT_START)"
+    echo
+    section "Archived" "${ARCHIVED[@]}"
+    section "Moved to Last Sprint" "${MOVED[@]}"
+    section "Left in Done" "${KEPT[@]}"
+  } >> "$SUMMARY"
+}
+trap write_summary EXIT
+
+# ── Writes ──────────────────────────────────────────────────
+archive_item() {
   gh api graphql -f query='
     mutation($projectId: ID!, $itemId: ID!) {
       archiveProjectV2Item(input: {
@@ -118,13 +150,9 @@ while IFS=$'\t' read -r id label; do
         itemId: $itemId
       }) { item { id } }
     }' -F projectId="$PROJECT_ID" \
-       -F itemId="$id" > /dev/null
-done < <(rows archive)
-
-while IFS=$'\t' read -r id label; do
-  [[ -z "$id" ]] && continue
-  echo "move     $label"
-  [[ "$DRY_RUN" == "false" ]] || continue
+       -F itemId="$1" > /dev/null
+}
+move_item() {
   gh api graphql -f query='
     mutation(
       $projectId: ID!, $itemId: ID!,
@@ -137,29 +165,26 @@ while IFS=$'\t' read -r id label; do
         value: { singleSelectOptionId: $optionId }
       }) { projectV2Item { id } }
     }' -F projectId="$PROJECT_ID" \
-       -F itemId="$id" \
+       -F itemId="$1" \
        -F fieldId="$STATUS_FIELD_ID" \
        -F optionId="$LAST_SPRINT_ID" > /dev/null
-done < <(rows move)
-
-# ── Summary ─────────────────────────────────────────────────
-section() {
-  local title="$1" key="$2"
-  echo "### $title ($(jq --arg k "$key" '.[$k] | length' \
-    <<< "$SEL"))"
-  jq -r --arg k "$key" \
-    'if .[$k] == [] then "- (none)"
-     else .[$k][] | "- \(.label)" end' <<< "$SEL"
-  echo
 }
-{
-  MODE="$([[ "$DRY_RUN" == "false" ]] && echo "" \
-    || echo " (dry run, nothing changed)")"
-  echo "## $SPRINT_TITLE rollover$MODE"
-  echo
-  echo "Cutoff: $CUTOFF (00:00 Eastern, $SPRINT_START)"
-  echo
-  section "Archived" archive
-  section "Moved to Last Sprint" move
-  section "Left in Done" keep
-} >> "$SUMMARY"
+
+# Runs WRITE on each KEY card in $SEL (unless a dry run) and
+# appends its label to the array named DONE.
+apply() {
+  local key="$1" write="$2" id label
+  local -n done_labels="$3"
+  while IFS=$'\t' read -r id label; do
+    [[ -z "$id" ]] && continue
+    echo "$key  $label"
+    if [[ "$DRY_RUN" == "false" ]]; then
+      "$write" "$id"
+    fi
+    done_labels+=("$label")
+  done < <(jq -r --arg k "$key" \
+    '.[$k][] | [.id, .label] | @tsv' <<< "$SEL")
+}
+
+apply archive archive_item ARCHIVED
+apply move    move_item    MOVED

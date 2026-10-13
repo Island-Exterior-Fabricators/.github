@@ -9,6 +9,9 @@ jobs:
   assign-sprints:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@v3
@@ -57,7 +60,9 @@ jobs:
             | select(.name == "Sprint") | .id')
 
           # Find current iteration
-          TODAY=$(date -u +%Y-%m-%d)
+          # Same Eastern date as sprint-rollover.sh
+          source .github/scripts/sprint-rollover-lib.sh
+          TODAY=$(eastern_today)
           CURRENT_ITERATION_ID=""
           CURRENT_ITERATION_TITLE=""
           while IFS= read -r iter; do

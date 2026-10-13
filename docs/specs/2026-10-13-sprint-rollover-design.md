@@ -87,14 +87,19 @@ New file `.github/workflows/project-sprint-rollover.yml` in
 - Left in Done (N)
 
 Each entry shows repo, number, and title, so it is clear what
-the run did and what it held back.
+the run did and what it held back. Items whose content the
+token can't read are shown as `(no access) <item id>`.
+
+The summary is written on exit, so a run that fails partway
+still lists exactly the cards it changed.
 
 ## Failure behavior
 
 - `set -euo pipefail`: a failed query or mutation fails the
   run, and GitHub's failure email is the alert.
-- A missing `Sprint` field, `Status` field, or `Last Sprint`
-  option fails loudly rather than doing nothing.
+- A missing `Sprint` field or `Status` field, or a `Done` or
+  `Last Sprint` option that is missing or not unique, fails
+  loudly before any write.
 
 ## Out of scope
 
@@ -105,12 +110,15 @@ the run did and what it held back.
 ## Testing
 
 `schedule` and `workflow_dispatch` only run from the default
-branch, so the workflow is verified after merge:
+branch, so a `pull_request` trigger (filtered to the rollover
+files) runs the tests and a dry run with the App token before
+merge. Writes happen only on `schedule` or a dispatch with
+`dry_run` unchecked; every other event is a dry run.
 
-1. Merge, then dispatch with `dry_run: true`.
+1. Open the PR; its run is the dry run.
 2. Check the summary against the known board state. On
    2026-10-13 that is 13 archived, 48 moved, and 3 left in
    Done (bom-manager-mcp-server#12, IslandBOMApp#755,
    IslandBOMApp#770).
-3. Let the nightly run perform the rollover, or dispatch
-   with `dry_run: false`.
+3. Merge, then let the nightly run perform the rollover, or
+   dispatch with `dry_run: false`.

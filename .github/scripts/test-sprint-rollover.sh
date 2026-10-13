@@ -86,18 +86,39 @@ ITEMS='[
     "repository":{"name":"IslandBOMApp"}}},
   {"id":"N1","status":null,
    "content":{"number":2,"title":"No status",
-    "repository":{"name":"IslandBOMApp"}}}
+    "repository":{"name":"IslandBOMApp"}}},
+  {"id":"D5","status":{"name":"Done",
+    "updatedAt":"2026-10-01T00:00:00Z"},
+   "content":null},
+  {"id":"D6","status":{"name":"Done",
+    "updatedAt":"2026-10-01T00:00:00Z"},
+   "content":{}}
 ]'
 SEL="$(select_rollover "$CUTOFF" <<< "$ITEMS")"
 ids() { jq -r --arg k "$1" '[.[$k][].id] | join(",")' <<< "$SEL"; }
+label() { jq -r --arg id "$1" \
+  '[.[][]] | .[] | select(.id == $id) | .label' <<< "$SEL"; }
 
 check "archive only pre-cutoff Last Sprint" "A1" "$(ids archive)"
-check "move pre-cutoff Done, incl. draft" "D1,D2,D4" "$(ids move)"
+check "move pre-cutoff Done, incl. draft" "D1,D2,D4,D5,D6" \
+  "$(ids move)"
 check "keep Done at/after cutoff" "D3" "$(ids keep)"
-check "issue label" "IslandBOMApp#717 Old" \
-  "$(jq -r '.archive[0].label' <<< "$SEL")"
-check "draft label" "(draft) A draft" \
-  "$(jq -r '.move[] | select(.id == "D4") | .label' <<< "$SEL")"
+check "issue label" "IslandBOMApp#717 Old" "$(label A1)"
+check "draft label" "(draft) A draft" "$(label D4)"
+check "null content label" "(no access) D5" "$(label D5)"
+check "empty content label" "(no access) D6" "$(label D6)"
+
+# ── status_option_id ────────────────────────────────────────
+OPTS='[{"id":"o1","name":"Done"},{"id":"o2","name":"Last Sprint"},
+  {"id":"o3","name":"Dup"},{"id":"o4","name":"Dup"}]'
+check "option found" "o2" \
+  "$(status_option_id "Last Sprint" <<< "$OPTS")"
+check "option missing" "::error::Status option 'Gone' not found" \
+  "$(status_option_id "Gone" <<< "$OPTS" 2>&1 >/dev/null)"
+check "option missing fails" "1" \
+  "$(status_option_id "Gone" <<< "$OPTS" 2>/dev/null; echo $?)"
+check "option not unique" "::error::Status option 'Dup' is not unique" \
+  "$(status_option_id "Dup" <<< "$OPTS" 2>&1 >/dev/null)"
 
 # ── need ────────────────────────────────────────────────────
 check "need passes a value" "0" \
