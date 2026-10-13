@@ -1,0 +1,54 @@
+name: Sprint Rollover
+
+# Archives Last Sprint cards and moves Done cards into Last
+# Sprint once a new sprint has started. Stateless: most nights
+# nothing qualifies, and a repeat or missed night is safe. See
+# .github/scripts/sprint-rollover.sh.
+#
+# `schedule` and `workflow_dispatch` only run from the default
+# branch, so test after merging with a dry-run dispatch.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # an hour after project-assign-sprint
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report only, change nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A hand dispatch must not overlap the nightly run.
+concurrency:
+  group: project-sprint-rollover
+  cancel-in-progress: false
+
+jobs:
+  rollover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PROJECT_AUTOMATION_CLIENT_ID }}
+          private-key: ${{ secrets.PROJECT_AUTOMATION_APP_KEY }}
+          owner: Island-Exterior-Fabricators
+
+      - name: Run helper tests
+        run: bash .github/scripts/test-sprint-rollover.sh
+
+      - name: Roll the board over
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Scheduled runs have no inputs, so they write.
+          DRY_RUN: >-
+            ${{ github.event_name == 'workflow_dispatch'
+            && inputs.dry_run || false }}
+        run: bash .github/scripts/sprint-rollover.sh
